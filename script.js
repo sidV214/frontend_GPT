@@ -2,116 +2,143 @@ const startBtn    = document.getElementById("startBtn");
 const output      = document.getElementById("output");
 const voiceSelect = document.getElementById("voiceSelect");
 
-let availableVoices = [];
-let selectedVoice   = null;
+let voices = [];
+const synth = window.speechSynthesis;
 
-// Restore saved background
-const savedBg = localStorage.getItem("bgColor");
-if (savedBg) document.body.style.backgroundColor = savedBg;
-
-// Populate voice dropdown
+// Populate voices
 function loadVoices() {
-  availableVoices = speechSynthesis.getVoices();
-  voiceSelect.innerHTML = "";
-  availableVoices.forEach((v, i) => {
-    const opt = document.createElement("option");
-    opt.value = i;
-    opt.textContent = `${v.name} (${v.lang})${v.default?" — Default":""}`;
-    voiceSelect.append(opt);
-  });
-  selectedVoice = availableVoices[0];
+  voices = synth.getVoices();
+  voiceSelect.innerHTML = voices
+    .map((v,i) => `<option value="${i}">${v.name} (${v.lang})</option>`)
+    .join("");
 }
-window.speechSynthesis.onvoiceschanged = loadVoices;
-voiceSelect.addEventListener("change", () => {
-  selectedVoice = availableVoices[+voiceSelect.value];
-});
+synth.onvoiceschanged = loadVoices;
 
+// Speak helper
 function speak(text) {
   const u = new SpeechSynthesisUtterance(text);
-  if (selectedVoice) u.voice = selectedVoice;
-  speechSynthesis.speak(u);
+  u.voice = voices[voiceSelect.value] || voices[0];
+  synth.speak(u);
 }
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-if (!SpeechRecognition) {
-  alert("Speech recognition not supported.");
+// Start recognition
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!Recognition) {
+  alert("SpeechRecognition not supported");
 } else {
-  const recognition = new SpeechRecognition();
-  recognition.lang = "en-US";
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
+  const recog = new Recognition();
+  recog.lang = "en-US";
+  recog.interimResults = false;
+  recog.maxAlternatives = 1;
 
   startBtn.addEventListener("click", () => {
-    recognition.start();
-    output.textContent = "Listening... 🎧";
+    recog.start();
+    output.textContent = "Listening…";
   });
 
-  recognition.addEventListener("result", (e) => {
-    let transcript = e.results[0][0].transcript.toLowerCase();
-    console.log("Heard raw:", transcript);
-    // Remove punctuation, extra 'the', normalize spaces
-    transcript = transcript
-      .replace(/[.,!?]/g, "")
-      .replace(/\bthe\b/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    console.log("Normalized:", transcript);
-    output.textContent = `You said: "${transcript}"`;
+  recog.onresult = e => {
+    let cmd = e.results[0][0].transcript.toLowerCase().trim();
+    output.textContent = `You said: “${cmd}”`;
+    handleCommand(cmd);
+  };
+}
 
-    // 1) background color/colour
-    let m = transcript.match(/background\s+(?:color|colour)\s+to\s+(\w+)/);
-    if (m) {
-      const color = m[1];
-      document.body.style.backgroundColor = color;
-      localStorage.setItem("bgColor", color);
-      return speak(`Background changed to ${color}`);
-    }
+function handleCommand(raw) {
+  // normalize British spelling & remove filler words
+  let cmd = raw
+    .replace(/colour/g, "color")
+    .replace(/\b(the|please)\b/g, "")
+    .replace(/[.,!?]/g, "")
+    .trim();
 
-    // 2) text color/colour
-    m = transcript.match(/text\s+(?:color|colour)\s+to\s+(\w+)/);
-    if (m) {
-      const color = m[1];
-      document.body.style.color = color;
-      return speak(`Text color changed to ${color}`);
-    }
+  console.log("CMD:", cmd);
 
-    // 3) dark/light mode
-    if ( transcript.includes("dark mode") || transcript.includes("enable dark mode") ) {
-      document.body.style.backgroundColor = "#1e1e1e";
-      document.body.style.color = "#fff";
-      localStorage.setItem("bgColor", "#1e1e1e");
-      return speak("Dark mode activated");
-    }
-    if ( transcript.includes("light mode") || transcript.includes("enable light mode") ) {
-      document.body.style.backgroundColor = "#f5f5f5";
-      document.body.style.color = "#222";
-      localStorage.setItem("bgColor", "#f5f5f5");
-      return speak("Light mode enabled");
-    }
+  // background color: change|set|make background [color] to X
+  let m = cmd.match(/(?:change|set|make).+background(?:\scolor)?\s+to\s+(\w+)/);
+  if (m) {
+    document.body.style.background = m[1];
+    speak(`Background changed to ${m[1]}`);
+    return;
+  }
 
-    // 4) open sites
-    if ( transcript.includes("open youtube") ) {
-      window.open("https://youtube.com", "_blank");
-      return speak("Opening YouTube");
-    }
-    if ( transcript.includes("open weather") ) {
-      window.open("https://weather.com", "_blank");
-      return speak("Opening Weather");
-    }
+  // reset background
+  if (/reset\s+background/.test(cmd)) {
+    document.body.style.background = "";
+    speak("Background reset");
+    return;
+  }
 
-    // 5) search Google
-    m = transcript.match(/search for\s+(.+)/);
-    if (m) {
-      const q = m[1].trim();
-      window.open(`https://www.google.com/search?q=${encodeURIComponent(q)}`, "_blank");
-      return speak(`Searching Google for ${q}`);
-    }
+  // text color
+  m = cmd.match(/(?:change|set).+text(?:\scolor)?\s+to\s+(\w+)/);
+  if (m) {
+    document.body.style.color = m[1];
+    speak(`Text color changed to ${m[1]}`);
+    return;
+  }
 
-    // fallback
-    speak("Sorry, I didn't understand that command.");
-  });
+  // dark/light mode
+  if (/(?:dark\s?mode|enable\s?dark)/.test(cmd)) {
+    document.body.style.background = "#111";
+    document.body.style.color = "#eee";
+    speak("Dark mode enabled");
+    return;
+  }
+  if (/(?:light\s?mode|enable\s?light)/.test(cmd)) {
+    document.body.style.background = "";
+    document.body.style.color = "";
+    speak("Light mode enabled");
+    return;
+  }
 
-  recognition.addEventListener("end", () => {
-    console.log("Recognition ended.");
-  });
+  // say/speak
+  m = cmd.match(/^(?:say|speak)\s+(.+)/);
+  if (m) {
+    speak(m[1]);
+    return;
+  }
+
+  // greetings & thanks
+  if (/(^|\s)hello(\s|$)/.test(cmd)) {
+    speak("Hello there!");
+    return;
+  }
+  if (/(thank you|thanks)/.test(cmd)) {
+    speak("You’re welcome!");
+    return;
+  }
+
+  // open website
+  if (/open\s+(youtube|weather)/.test(cmd)) {
+    let site = cmd.match(/open\s+(youtube|weather)/)[1];
+    let url = site === "youtube"
+      ? "https://youtube.com"
+      : "https://weather.com";
+    window.open(url, "_blank");
+    speak(`Opening ${site}`);
+    return;
+  }
+
+  // search
+  m = cmd.match(/search\s+for\s+(.+)/);
+  if (m) {
+    let q = encodeURIComponent(m[1]);
+    window.open(`https://google.com/search?q=${q}`, "_blank");
+    speak(`Searching for ${m[1]}`);
+    return;
+  }
+
+  // hide/show header
+  if (/(?:hide).+header/.test(cmd)) {
+    document.querySelector("h1").style.display = "none";
+    speak("Header hidden");
+    return;
+  }
+  if (/(?:show).+header/.test(cmd)) {
+    document.querySelector("h1").style.display = "";
+    speak("Header shown");
+    return;
+  }
+
+  // fallback
+  speak("Sorry, I didn't understand your command.");
 }
